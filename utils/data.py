@@ -230,8 +230,8 @@ class iCars(iData):
     test_trsf = train_trsf
     
     def download_data(self):
-        train_dir = "../../my_data/cars/train/"
-        test_dir = "../../my_data/cars/test/"
+        train_dir = "/content/CLG-CBM/stanford_cars/train"
+        test_dir = "/content/CLG-CBM/stanford_cars/test"
 
         train_dset = datasets.ImageFolder(train_dir)
         test_dset = datasets.ImageFolder(test_dir)
@@ -249,8 +249,8 @@ class iCUB200(iData):
     test_trsf = train_trsf
 
     def download_data(self):
-        train_dset = datasets.ImageFolder("../../my_data/cub/train/")
-        test_dset = datasets.ImageFolder("../../my_data/cub/test/")
+        train_dset = datasets.ImageFolder("/content/CLG-CBM/cub_split/train")
+        test_dset = datasets.ImageFolder("/content/CLG-CBM/cub_split/test")
 
         self.train_data,self.train_targets = split_images_labels(train_dset.imgs)
         self.test_data,self.test_targets = split_images_labels(test_dset.imgs)

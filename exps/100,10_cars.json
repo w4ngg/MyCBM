@@ -20,7 +20,7 @@
     "convnet_type":"none",
     "seed": [1993],
     "batch_size" : 64,
-    "num_workers" : 8,
+    "num_workers" : 2,
     "model_type":"clip",
     "division_power":5,
     "linear_model": ["linear","bn","linear"],
