@@ -122,15 +122,23 @@ def _train(args):
 #         gpus.append(device)
 
 #     args["device"] = gpus
-def _set_device(args):
-    gpus = []
+# def _set_device(args):
+#     gpus = []
 
-    # Nếu không có GPU hoặc người dùng yêu cầu CPU (với -1)
+#     # Nếu không có GPU hoặc người dùng yêu cầu CPU (với -1)
+#     if not torch.cuda.is_available() or (isinstance(args["device"], list) and args["device"][0] == -1):
+#         gpus = [torch.device("cpu")]
+#     else:
+#         # Google Colab chỉ có 1 GPU => luôn dùng cuda:0
+#         gpus = [torch.device("cuda:0")]
+
+#     args["device"] = gpus
+def _set_device(args):
+    gpus=[]
     if not torch.cuda.is_available() or (isinstance(args["device"], list) and args["device"][0] == -1):
         gpus = [torch.device("cpu")]
     else:
-        # Google Colab chỉ có 1 GPU => luôn dùng cuda:0
-        gpus = [torch.device("cuda:0")]
+        gpus = [torch.device(f"cuda:{i}") for i in range(torch.cuda.device_count())]
 
     args["device"] = gpus
 
