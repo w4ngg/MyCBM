@@ -18,6 +18,7 @@ from utils.inc_net import IncrementalNet,PrototypicalNet,Gateway,CLASS_CONCEPT_M
 from utils.toolkit import count_parameters, target2onehot, tensor2numpy
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 from utils.data_manager import FeatureDataset
+from sklearn.mixture import GaussianMixture
 
 import time
 from utils.data_manager import DataManager
@@ -36,6 +37,7 @@ class Player(BaseLearner):
         self.score_dict,self.bottle_dict = {},{}
         self.gateway = Gateway(self.args,self._device).to(self._device)
         self.pre_protos, self.ori_protos, self.cpt_count, self.proto_dict, self.ori_covs = [],[],[],[],[]
+        self.gmms = []
         self.cpt_table = [0]
         self.cpt_counter_pos, self.cpt_counter_neg, self.raw_concepts = [], [], []
         self.attr_dict = {}
@@ -75,7 +77,25 @@ class Player(BaseLearner):
 
                 self.ori_protos.append(cls_mean)
                 self.ori_covs.append(cls_cov)
-                        
+    def building_gmms(self):
+    # prototype construction using GMM
+        print("building GMM...")
+
+        with torch.no_grad():
+            train_features, train_labels = self.get_image_embeddings(self.train_loader)
+            train_features, train_labels = torch.from_numpy(train_features).float(), torch.from_numpy(train_labels).float()
+            
+            for i in range(self._known_classes, self._total_classes):
+                index = torch.nonzero(train_labels == i)
+                index = index.squeeze()
+                class_data = train_features[index].cpu().numpy()
+                
+                # Fit GMM with multiple components
+                n_components = 3
+                gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42)
+                gmm.fit(class_data)
+                self.gmms.append(gmm)
+
     def get_image_embeddings(self,loader):
 
         with torch.no_grad():
@@ -190,21 +210,22 @@ class Player(BaseLearner):
         self.eval_test_loader = DataLoader(eval_test_dataset, batch_size=self.args["batch_size"], shuffle=False, num_workers=self.args["num_workers"])
         # bottleneck
         self.pool = int(task_size * self.args["pool"])
-        # load bottleneck
+        # load bottleneck, text features
         attributes_embeddings,class_names = self.cluster(self.concept_cls,self.pool)  
-
+        #attributesa_embeddings return text features for current task
         self.names  = class_names if self.names == None else torch.cat((self.names,class_names),dim=0) 
         self.bottleneck = attributes_embeddings.to(self._device) if self.bottleneck is None else torch.concat((self.bottleneck,attributes_embeddings.to(self._device)),dim=0)
-        
+        #has been updated the bottleneck features
         self.bottle_dict[self._cur_task] = self.bottleneck
         self.cpt_table.append(self.bottleneck.shape[0])
 
         # Building Prototypes
         self.building_protos()
-        
+        self.building_gmms()
         # Building pseudo features
         if self._cur_task: self._compute_relations()
         self._build_feature_set()
+        #combine old and new features
         self.train_loader = DataLoader(self._feature_trainset, batch_size=self.args["batch_size"], shuffle=True, num_workers=self.args['num_workers'], pin_memory=True)
         
         self.stage=1
@@ -305,6 +326,7 @@ class Player(BaseLearner):
     
     def _similiarity_loss(self, inputs, bottleneck, csv, sg=None, cpt_targets=None):
         # concept alignment
+        #inputs comprise real and pseudo features, bottleneck is the text features are both new and o
         if len(inputs.shape) > 2: img_feats = self._network.extract_vector(inputs.to(self._device)).float()
         else: img_feats = inputs.float()
         distance_loss = nn.MSELoss()
@@ -361,41 +383,95 @@ class Player(BaseLearner):
         vec = vec + mean
         return vec
     
+    # def _build_feature_set(self):
+    #     vectors_train = []
+    #     labels_train = []
+    #     print("constructing pseudo features...")
+    #     for class_idx in range(self._known_classes, self._total_classes):
+    #         data, targets, idx_dataset = self.data_manager.get_dataset(np.arange(class_idx, class_idx+1), source='train', mode='train', ret_data=True)
+    #         idx_loader = DataLoader(idx_dataset, batch_size=self.args["batch_size"], shuffle=False, num_workers=4)
+    #         vectors, labels = self.get_image_embeddings(idx_loader)
+    #         vectors_train.append(vectors)
+    #         labels_train.append([class_idx]*len(vectors))
+            
+    #     num_new_classes = self._total_classes - self._known_classes
+    #     new_class_sample_counts = []
+    #     for class_idx in range(self._known_classes, self._total_classes):
+    #         data, targets, idx_dataset = self.data_manager.get_dataset(
+    #             np.arange(class_idx, class_idx+1), source='train', mode='train', ret_data=True)
+    #         new_class_sample_counts.append(len(targets))
+
+    #     for i, class_idx in enumerate(range(self._known_classes)):
+    #         match_idx = i % num_new_classes
+    #         num_samples_per_class = new_class_sample_counts[match_idx]
+    #         mean = self.ori_protos[class_idx].cpu().numpy()
+    #         cov = self.ori_covs[class_idx].cpu().numpy()
+    #         pseudo_features = np.random.multivariate_normal(mean, cov, size=num_samples_per_class)
+    #         vectors_train.append(pseudo_features)
+    #         labels_train.append([class_idx] * num_samples_per_class)  
+            
+    #     total_pseudo = sum(int(new_class_sample_counts[i % num_new_classes]/2) for i in range(self._known_classes))
+    #     print(f'Total pseudo-features created: {total_pseudo}')
+    #     vectors_train = np.concatenate(vectors_train)
+    #     labels_train = np.concatenate(labels_train)
+    #     print(f'vectors_train shape: {vectors_train.shape}')
+    #     self._feature_trainset = Pesudo_FeatureDataset(vectors_train, labels_train)
+
     def _build_feature_set(self):
         vectors_train = []
         labels_train = []
         print("constructing pseudo features...")
+        
+        # Get features for new classes
         for class_idx in range(self._known_classes, self._total_classes):
-            data, targets, idx_dataset = self.data_manager.get_dataset(np.arange(class_idx, class_idx+1), source='train', mode='train', ret_data=True)
-            idx_loader = DataLoader(idx_dataset, batch_size=self.args["batch_size"], shuffle=False, num_workers=4)
+            data, targets, idx_dataset = self.data_manager.get_dataset(
+                np.arange(class_idx, class_idx+1), 
+                source='train', 
+                mode='train', 
+                ret_data=True
+            )
+            idx_loader = DataLoader(idx_dataset, batch_size=self.args["batch_size"], 
+                                shuffle=False, num_workers=4)
             vectors, labels = self.get_image_embeddings(idx_loader)
             vectors_train.append(vectors)
             labels_train.append([class_idx]*len(vectors))
-            
+        
+        # Count samples per new class
         num_new_classes = self._total_classes - self._known_classes
         new_class_sample_counts = []
         for class_idx in range(self._known_classes, self._total_classes):
             data, targets, idx_dataset = self.data_manager.get_dataset(
-                np.arange(class_idx, class_idx+1), source='train', mode='train', ret_data=True)
+                np.arange(class_idx, class_idx+1), 
+                source='train', 
+                mode='train', 
+                ret_data=True
+            )
             new_class_sample_counts.append(len(targets))
 
+        # Generate pseudo features using GMMs
         for i, class_idx in enumerate(range(self._known_classes)):
             match_idx = i % num_new_classes
             num_samples_per_class = new_class_sample_counts[match_idx]
-            mean = self.ori_protos[class_idx].cpu().numpy()
-            cov = self.ori_covs[class_idx].cpu().numpy()
-            pseudo_features = np.random.multivariate_normal(mean, cov, size=num_samples_per_class)
-            vectors_train.append(pseudo_features)
-            labels_train.append([class_idx] * num_samples_per_class)  # Use half_samples here too
             
-        total_pseudo = sum(int(new_class_sample_counts[i % num_new_classes]/2) for i in range(self._known_classes))
+            # Get GMM for current class
+            gmm = self.gmms[class_idx]
+            
+            # Generate samples from GMM
+            pseudo_features, _ = gmm.sample(n_samples=num_samples_per_class)
+            pseudo_features = pseudo_features.astype(np.float32)
+            
+            vectors_train.append(pseudo_features)
+            labels_train.append([class_idx] * num_samples_per_class)
+        
+        total_pseudo = sum(int(new_class_sample_counts[i % num_new_classes]) 
+                        for i in range(self._known_classes))
         print(f'Total pseudo-features created: {total_pseudo}')
         vectors_train = np.concatenate(vectors_train)
         labels_train = np.concatenate(labels_train)
         print(f'vectors_train shape: {vectors_train.shape}')
         self._feature_trainset = Pesudo_FeatureDataset(vectors_train, labels_train)
 
-    
+
     def _compute_loss(self,regularizer,configs):
         if regularizer == 'mahalanobis':
             mahalanobis_loss = (self.mahalanobis_distance(self.gateway.gate[0].weight/self.gateway.gate[0].weight.data.norm(dim=-1, keepdim=True), configs['mu'].to(self._device),configs['sigma_inv'].to(self._device)) - configs['mean_distance']) / (configs['mean_distance']**self.args['division_power'])

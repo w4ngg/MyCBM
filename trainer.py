@@ -63,8 +63,8 @@ def _train(args):
     cnn_curve, nme_curve = {"top1": [], "top5": []}, {"top1": [], "top5": []}
     # data_manager.nb_tasks
     for task in range(model.data_manager.nb_tasks):
-        # logging.info("All params: {}".format(count_parameters(model._network)))
-        # logging.info("Trainable params: {}".format(count_parameters(model._network, True)))
+        logging.info("All params: {}".format(count_parameters(model._network)))
+        logging.info("Trainable params: {}".format(count_parameters(model._network, True)))
         
         model.incremental_train()
         cnn_accy, nme_accy = model.eval_task()
