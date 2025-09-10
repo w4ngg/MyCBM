@@ -221,7 +221,7 @@ class Player(BaseLearner):
 
         # Building Prototypes
         self.building_protos()
-        self.building_gmms()
+        #self.building_gmms()
         # Building pseudo features
         if self._cur_task: self._compute_relations()
         self._build_feature_set()
@@ -416,60 +416,82 @@ class Player(BaseLearner):
     #     labels_train = np.concatenate(labels_train)
     #     print(f'vectors_train shape: {vectors_train.shape}')
     #     self._feature_trainset = Pesudo_FeatureDataset(vectors_train, labels_train)
-
     def _build_feature_set(self):
         vectors_train = []
         labels_train = []
+
         print("constructing pseudo features...")
-        
-        # Get features for new classes
         for class_idx in range(self._known_classes, self._total_classes):
-            data, targets, idx_dataset = self.data_manager.get_dataset(
-                np.arange(class_idx, class_idx+1), 
-                source='train', 
-                mode='train', 
-                ret_data=True
-            )
-            idx_loader = DataLoader(idx_dataset, batch_size=self.args["batch_size"], 
-                                shuffle=False, num_workers=4)
+            data, targets, idx_dataset = self.data_manager.get_dataset(np.arange(class_idx, class_idx+1), source='train', mode='train', ret_data=True)
+            idx_loader = DataLoader(idx_dataset, batch_size=self.args["batch_size"], shuffle=False, num_workers=4)
             vectors, labels = self.get_image_embeddings(idx_loader)
             vectors_train.append(vectors)
             labels_train.append([class_idx]*len(vectors))
-        
-        # Count samples per new class
-        num_new_classes = self._total_classes - self._known_classes
-        new_class_sample_counts = []
-        for class_idx in range(self._known_classes, self._total_classes):
-            data, targets, idx_dataset = self.data_manager.get_dataset(
-                np.arange(class_idx, class_idx+1), 
-                source='train', 
-                mode='train', 
-                ret_data=True
-            )
-            new_class_sample_counts.append(len(targets))
 
-        # Generate pseudo features using GMMs
-        for i, class_idx in enumerate(range(self._known_classes)):
-            match_idx = i % num_new_classes
-            num_samples_per_class = new_class_sample_counts[match_idx]
             
-            # Get GMM for current class
-            gmm = self.gmms[class_idx]
-            
-            # Generate samples from GMM
-            pseudo_features, _ = gmm.sample(n_samples=num_samples_per_class)
-            pseudo_features = pseudo_features.astype(np.float32)
-            
-            vectors_train.append(pseudo_features)
-            labels_train.append([class_idx] * num_samples_per_class)
-        
-        total_pseudo = sum(int(new_class_sample_counts[i % num_new_classes]) 
-                        for i in range(self._known_classes))
-        print(f'Total pseudo-features created: {total_pseudo}')
+        for class_idx in range(0,self._known_classes):
+            new_idx = self._relations[class_idx]
+            vectors_train.append(vectors_train[new_idx-self._known_classes]-self.ori_protos[new_idx].cpu().numpy()+self.ori_protos[class_idx].cpu().numpy())
+            labels_train.append([class_idx]*len(vectors_train[-1])) 
+
         vectors_train = np.concatenate(vectors_train)
         labels_train = np.concatenate(labels_train)
-        print(f'vectors_train shape: {vectors_train.shape}')
-        self._feature_trainset = Pesudo_FeatureDataset(vectors_train, labels_train)
+        
+        self._feature_trainset = Pesudo_FeatureDataset(vectors_train,labels_train)
+
+    # def _build_feature_set(self):
+    #     vectors_train = []
+    #     labels_train = []
+    #     print("constructing pseudo features...")
+        
+    #     # Get features for new classes
+    #     for class_idx in range(self._known_classes, self._total_classes):
+    #         data, targets, idx_dataset = self.data_manager.get_dataset(
+    #             np.arange(class_idx, class_idx+1), 
+    #             source='train', 
+    #             mode='train', 
+    #             ret_data=True
+    #         )
+    #         idx_loader = DataLoader(idx_dataset, batch_size=self.args["batch_size"], 
+    #                             shuffle=False, num_workers=4)
+    #         vectors, labels = self.get_image_embeddings(idx_loader)
+    #         vectors_train.append(vectors)
+    #         labels_train.append([class_idx]*len(vectors))
+        
+    #     # Count samples per new class
+    #     num_new_classes = self._total_classes - self._known_classes
+    #     new_class_sample_counts = []
+    #     for class_idx in range(self._known_classes, self._total_classes):
+    #         data, targets, idx_dataset = self.data_manager.get_dataset(
+    #             np.arange(class_idx, class_idx+1), 
+    #             source='train', 
+    #             mode='train', 
+    #             ret_data=True
+    #         )
+    #         new_class_sample_counts.append(len(targets))
+
+    #     # Generate pseudo features using GMMs
+    #     for i, class_idx in enumerate(range(self._known_classes)):
+    #         match_idx = i % num_new_classes
+    #         num_samples_per_class = new_class_sample_counts[match_idx]
+            
+    #         # Get GMM for current class
+    #         gmm = self.gmms[class_idx]
+            
+    #         # Generate samples from GMM
+    #         pseudo_features, _ = gmm.sample(n_samples=num_samples_per_class)
+    #         pseudo_features = pseudo_features.astype(np.float32)
+            
+    #         vectors_train.append(pseudo_features)
+    #         labels_train.append([class_idx] * num_samples_per_class)
+        
+    #     total_pseudo = sum(int(new_class_sample_counts[i % num_new_classes]) 
+    #                     for i in range(self._known_classes))
+    #     print(f'Total pseudo-features created: {total_pseudo}')
+    #     vectors_train = np.concatenate(vectors_train)
+    #     labels_train = np.concatenate(labels_train)
+    #     print(f'vectors_train shape: {vectors_train.shape}')
+    #     self._feature_trainset = Pesudo_FeatureDataset(vectors_train, labels_train)
 
 
     def _compute_loss(self,regularizer,configs):
